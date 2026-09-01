@@ -335,9 +335,13 @@ main{
 /* 新聞圖卡 */
 .news-card{display:flex;gap:12px;align-items:center;padding:10px;border-radius:12px;text-decoration:none;border:1px solid transparent;transition:.15s;background:var(--surface-2)}
 .news-card:hover{border-color:var(--border-strong);box-shadow:var(--glow-soft)}
-.news-thumb{width:72px;height:72px;border-radius:10px;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;background:var(--surface-3)}
+.news-thumb{width:72px;height:72px;border-radius:10px;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;background:var(--surface-3);position:relative}
 .news-thumb img{width:100%;height:100%;object-fit:cover;display:block}
-.news-thumb--ph{font-family:var(--font-mono);font-size:26px;font-weight:800;color:var(--neon-cyan);background:linear-gradient(135deg,rgba(0,240,255,.14),rgba(168,85,247,.16))}
+.news-thumb img.is-hidden{display:none}
+.news-thumb--ph{background:linear-gradient(135deg,rgba(0,240,255,.14),rgba(168,85,247,.16))}
+.news-thumb--ph .news-ph-text{font-family:var(--font-mono);font-size:22px;font-weight:800;color:var(--neon-cyan);letter-spacing:-.5px;line-height:1}
+.news-thumb--fav img{width:42px;height:42px;border-radius:8px}
+.news-card--hero .news-thumb--ph .news-ph-text{font-size:34px}
 .news-card-body{display:flex;flex-direction:column;gap:4px;min-width:0}
 .news-card .news-title{font-size:var(--fs-sm);font-weight:700;color:var(--text-strong);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .news-card--hero{flex-direction:column;align-items:stretch;padding:0;overflow:hidden}
@@ -1595,8 +1599,39 @@ details[open] summary::before{transform:rotate(90deg)}
     return {title, src, time:relTime(it.pubDate)};
   }
   function newsImg(it){
-    if(it.thumbnail) return it.thumbnail;
-    if(it.enclosure && it.enclosure.link) return it.enclosure.link;
+    const t=it.thumbnail || (it.enclosure && it.enclosure.link) || "";
+    // Google News 嘅 read/ 內部 redirect URL 經常無 image；過濾掉避免 load 空白
+    if(!t || /news\.google\.com\/read\//i.test(t)) return "";
+    return t;
+  }
+  // 已知 source → 對應 domain（用 Google favicon service 拎 logo，免費穩定）
+  const SRC_DOMAIN={
+    "yahoo":"yahoo.com","yahoo news":"yahoo.com","yahoo 新聞":"yahoo.com","yahoo 香港":"hk.yahoo.com",
+    "明報":"mingpao.com","明報新聞網":"mingpao.com","明報即時新聞":"mingpao.com",
+    "rthk":"rthk.hk","香港電台":"rthk.hk","香港電台新聞網":"rthk.hk",
+    "unwire":"unwire.hk","unwire.hk":"unwire.hk",
+    "now 新聞":"now.com","now 新聞台":"now.com","now新聞":"now.com",
+    "hk01":"hk01.com","香港01":"hk01.com",
+    "scmp":"scmp.com","南華早報":"scmp.com",
+    "晴報":"skypost.hk",
+    "東方日報":"orientaldaily.on.cc",
+    "星島":"stheadline.com","星島日報":"stheadline.com","頭條日報":"stheadline.com",
+    "am730":"am730.com.hk",
+    "經濟日報":"hket.com","香港經濟日報":"hket.com",
+    "信報":"hkej.com","信報財經新聞":"hkej.com",
+    "bbc news":"bbc.com","bbc":"bbc.com",
+    "the guardian":"theguardian.com","guardian":"theguardian.com",
+    "reuters":"reuters.com","路透社":"reuters.com",
+    "法新社":"afp.com","afp":"afp.com",
+    "cnn":"cnn.com",
+    "the new york times":"nytimes.com"
+  };
+  function faviconFor(src){
+    if(!src) return "";
+    const k=src.trim().toLowerCase();
+    if(SRC_DOMAIN[k]) return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(SRC_DOMAIN[k])}&sz=64`;
+    // src 本身就是 domain（例 "unwire.hk"）
+    if(/^[a-z0-9.-]+\.[a-z]{2,}/i.test(k)) return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(k)}&sz=64`;
     return "";
   }
   function newsCard(it, hero){
@@ -1604,10 +1639,21 @@ details[open] summary::before{transform:rotate(90deg)}
     const link=escapeHtml(it.link||"#");
     const meta=[m.src,m.time].filter(Boolean).join(" · ");
     const cls=hero?"news-card news-card--hero":"news-card";
-    const img=newsImg(it);
-    const thumb=img
-      ? `<span class="news-thumb"><img src="${escapeHtml(img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.style.display='none'"></span>`
-      : `<span class="news-thumb news-thumb--ph">${escapeHtml((m.src||m.title).charAt(0))}</span>`;
+    const realImg=newsImg(it);
+    // Hero 用大 placeholder 較靚；細 card 冇真圖時 fallback 到 favicon
+    const favicon=hero?"":faviconFor(m.src);
+    const imgUrl=realImg || favicon;
+    const useFav=!realImg && !!favicon;
+    // Placeholder 字符：src 首 2 字；無 src 用 title 首 2 字
+    const ph=escapeHtml(((m.src || m.title || "?") + "??").slice(0,2));
+    let thumb;
+    if(imgUrl){
+      const cls2=useFav?"news-thumb news-thumb--fav":"news-thumb";
+      const onerr="this.classList.add('is-hidden');this.parentNode.classList.add('news-thumb--ph');var s=document.createElement('span');s.className='news-ph-text';s.textContent=this.dataset.ph;this.parentNode.appendChild(s);";
+      thumb=`<span class="${cls2}"><img src="${escapeHtml(imgUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-ph="${ph}" onerror="${onerr}"></span>`;
+    } else {
+      thumb=`<span class="news-thumb news-thumb--ph"><span class="news-ph-text">${ph}</span></span>`;
+    }
     return `<a class="${cls}" href="${link}" target="_blank" rel="noopener">${thumb}<span class="news-card-body"><span class="news-title">${escapeHtml(m.title)}</span><span class="news-meta">${meta}</span></span></a>`;
   }
   function newsRow(it){
